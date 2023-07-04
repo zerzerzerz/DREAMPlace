@@ -208,9 +208,9 @@ void PyPlaceDB::set(PlaceDB const& db)
                     box.xh() + node.xl(),
                     box.yh() + node.yl()
                    );
-            char buf[128];
-            dreamplaceSPrint(kNONE, buf, "%s.DREAMPlace.Shape%u", db.nodeName(node).c_str(), i);
-            addNode(node, std::string(buf), Orient(node.orient()), box, dist2map);
+            std::ostringstream oss; 
+            oss << db.nodeName(node) << ".DREAMPlace.Shape" << i; 
+            addNode(node, oss.str(), Orient(node.orient()), box, dist2map);
             bbox.encompass(box);
         }
         // compute the upper bound of fixed cell area
@@ -343,6 +343,8 @@ void PyPlaceDB::set(PlaceDB const& db)
         Pin const& pin = db.pin(i);
         Node const& node = db.getNode(pin);
         pin_direct.append(std::string(pin.direct()));
+        pin_names.append(std::string(pin.name()));
+        pin_name2id_map[pybind11::str(pin.name())] = i;
         // for fixed macros with multiple boxes, put all pins to the first one
         PlaceDB::index_type new_node_id = mNode2NewNodes.at(node.id()).at(0);
         Pin::point_type pin_pos (node.pinPos(pin));
@@ -361,6 +363,9 @@ void PyPlaceDB::set(PlaceDB const& db)
     {
         Net const& net = db.net(i);
         net_weights.append(net.weight());
+        net_weight_deltas.append(0.);
+        net_criticality.append(0.);
+        net_criticality_deltas.append(0.);
         net_name2id_map[pybind11::str(db.netName(net))] = net.id();
         net_names.append(pybind11::str(db.netName(net)));
         pybind11::list pins;

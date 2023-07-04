@@ -34,6 +34,7 @@ class PlaceDB (object):
         To avoid the usage of list, I flatten everything.
         """
         self.rawdb = None # raw placement database, a C++ object
+        self.pydb = None # python placement database interface
 
         self.num_physical_nodes = 0 # number of real nodes, including movable nodes, terminals, and terminal_NIs
         self.num_terminals = 0 # number of terminals, essentially fixed macros
@@ -113,6 +114,7 @@ class PlaceDB (object):
         self.initial_horizontal_demand_map = None # routing demand map from fixed cells, indexed by (grid x, grid y), projected to one layer
         self.initial_vertical_demand_map = None # routing demand map from fixed cells, indexed by (grid x, grid y), projected to one layer
 
+        self.max_net_weight = None # maximum net weight in timing opt
         self.dtype = None
 
     def scale_pl(self, shift_factor, scale_factor):
@@ -364,6 +366,20 @@ class PlaceDB (object):
             wl += self.net_hpwl(x, y, net_id)
         return wl
 
+    def sum_pin_weights(self, weights=None):
+        """
+        @brief sum pin weights inside a physical node
+        @param weights the torch tensor to store node weight data
+        """
+        if weights is None:
+            weights = torch.zeros(
+                self.num_nodes,
+                dtype=self.net_weights.dtype, device="cpu")
+        self.pydb.sum_pin_weights(
+            torch.tensor(self.net_weights),
+            weights)
+        return weights
+
     def overlap(self, xl1, yl1, xh1, yh1, xl2, yl2, xh2, yh2):
         """
         @brief compute overlap between two boxes
@@ -474,6 +490,8 @@ class PlaceDB (object):
         @param params parameters
         """
         pydb = place_io.PlaceIOFunction.pydb(self.rawdb)
+        self.pydb = pydb
+        self.device = torch.device("cuda" if params.gpu else "cpu")
 
         self.num_physical_nodes = pydb.num_nodes
         self.num_terminals = pydb.num_terminals
@@ -513,12 +531,17 @@ class PlaceDB (object):
         self.pin_direct = np.array(pydb.pin_direct, dtype=np.string_)
         self.pin_offset_x = np.array(pydb.pin_offset_x, dtype=self.dtype)
         self.pin_offset_y = np.array(pydb.pin_offset_y, dtype=self.dtype)
+        self.pin_names = np.array(pydb.pin_names, dtype=np.string_)
         self.net_name2id_map = pydb.net_name2id_map
+        self.pin_name2id_map = pydb.pin_name2id_map
         self.net_names = np.array(pydb.net_names, dtype=np.string_)
         self.net2pin_map = pydb.net2pin_map
         self.flat_net2pin_map = np.array(pydb.flat_net2pin_map, dtype=np.int32)
         self.flat_net2pin_start_map = np.array(pydb.flat_net2pin_start_map, dtype=np.int32)
         self.net_weights = np.array(pydb.net_weights, dtype=self.dtype)
+        self.net_weight_deltas = np.array(pydb.net_weight_deltas, dtype=self.dtype)
+        self.net_criticality = np.array(pydb.net_criticality, dtype=self.dtype)
+        self.net_criticality_deltas = np.array(pydb.net_criticality_deltas, dtype=self.dtype)
         self.node2pin_map = pydb.node2pin_map
         self.flat_node2pin_map = np.array(pydb.flat_node2pin_map, dtype=np.int32)
         self.flat_node2pin_start_map = np.array(pydb.flat_node2pin_start_map, dtype=np.int32)
@@ -568,12 +591,16 @@ class PlaceDB (object):
         # convert node2pin_map to array of array
         for i in range(len(self.node2pin_map)):
             self.node2pin_map[i] = np.array(self.node2pin_map[i], dtype=np.int32)
-        self.node2pin_map = np.array(self.node2pin_map)
+        self.node2pin_map = np.array(self.node2pin_map, dtype=object)
 
         # convert net2pin_map to array of array
         for i in range(len(self.net2pin_map)):
             self.net2pin_map[i] = np.array(self.net2pin_map[i], dtype=np.int32)
-        self.net2pin_map = np.array(self.net2pin_map)
+        self.net2pin_map = np.array(self.net2pin_map, dtype=object)
+
+        # convert the max_net_weight from params
+        # note that infinity may be included so we need a type cast
+        self.max_net_weight = np.float64(params.max_net_weight)
 
     def initialize_num_bins(self, params):
         """
